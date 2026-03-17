@@ -133,4 +133,4 @@ curl -X POST http://localhost:8000/pay/insights \
 
 ## License
 
-Apache 2.0
+[MIT](LICENSE)
