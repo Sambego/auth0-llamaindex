@@ -17,33 +17,53 @@ current user is permitted to view.
 
 import asyncio
 import os
+from typing import Annotated
 
+from dotenv import load_dotenv
 from llama_index.core.schema import NodeWithScore, QueryBundle
 from llama_index.core.workflow import Event, StartEvent, StopEvent, Workflow, step
 from llama_index.llms.anthropic import Anthropic
 from pydantic import Field
+from workflows.resource import Resource
 
-from retriever import build_fga_retriever, get_department_members
-
+from .retriever import build_fga_retriever, get_department_members
 
 # ── Events ────────────────────────────────────────────────────────────────────
 # Events are the typed messages that flow between workflow steps.
 # RetrievedEvent carries everything the synthesize step needs.
 
+
+class InputEvent(StartEvent):
+    user_id: str
+    query: str
+
+
 class RetrievedEvent(Event):
     query: str
     user_id: str
-    nodes: list[NodeWithScore] = Field(default_factory=list)   # FGA-filtered docs
-    departments: list[str] = Field(default_factory=list)       # departments user manages
-    members: list[str] = Field(default_factory=list)           # member IDs in those depts
+    nodes: list[NodeWithScore] = Field(default_factory=list)  # FGA-filtered docs
+    departments: list[str] = Field(default_factory=list)  # departments user manages
+    members: list[str] = Field(default_factory=list)  # member IDs in those depts
+
+
+# ── Resources ────────────────────────────────────────────────────────────────────
+
+
+def get_llm() -> Anthropic:
+    load_dotenv(".env")
+    return Anthropic(
+        model="claude-4-6-sonnet",
+        base_url=os.getenv("ANTHROPIC_BASE_URL"),
+        max_tokens=4096,
+    )
 
 
 # ── Workflow ──────────────────────────────────────────────────────────────────
 
-class RAGWorkflow(Workflow):
 
+class RAGWorkflow(Workflow):
     @step
-    async def retrieve(self, ev: StartEvent) -> RetrievedEvent:
+    async def retrieve(self, ev: InputEvent) -> RetrievedEvent:
         """
         Fetch the authorized paycheck documents and department context in parallel.
 
@@ -56,20 +76,25 @@ class RAGWorkflow(Workflow):
         synthesize prompt with team context when the user manages a department.
         Both calls run concurrently with asyncio.gather.
         """
-        query = ev.get("query") or ""
-        user_id = ev.get("user_id") or ""
+        query = ev.query
+        user_id = ev.user_id
 
         nodes, (departments, members) = await asyncio.gather(
             build_fga_retriever(user_id)._aretrieve(QueryBundle(query_str=query)),
             get_department_members(user_id),
         )
         return RetrievedEvent(
-            query=query, user_id=user_id, nodes=nodes,
-            departments=departments, members=members,
+            query=query,
+            user_id=user_id,
+            nodes=nodes,
+            departments=departments,
+            members=members,
         )
 
     @step
-    async def synthesize(self, ev: RetrievedEvent) -> StopEvent:
+    async def synthesize(
+        self, ev: RetrievedEvent, llm: Annotated[Anthropic, Resource(get_llm)]
+    ) -> StopEvent:
         """
         Build a prompt from the authorized documents and get an answer from Claude.
 
@@ -98,7 +123,8 @@ class RAGWorkflow(Workflow):
         members_note = (
             f"Department: {', '.join(ev.departments)}\n"
             f"Department members: {', '.join(ev.members)}\n\n"
-            if ev.departments else ""
+            if ev.departments
+            else ""
         )
 
         prompt = (
@@ -112,5 +138,6 @@ class RAGWorkflow(Workflow):
             f"=== Question ===\n{ev.query}"
         )
 
-        llm = Anthropic(model="claude-4-6-sonnet", base_url=os.getenv("ANTHROPIC_BASE_URL"), max_tokens=4096)
-        return StopEvent(result=str(await llm.acomplete(prompt)))
+        result = await llm.acomplete(prompt)
+
+        return StopEvent(result=str(result))

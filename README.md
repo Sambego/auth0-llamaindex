@@ -131,6 +131,26 @@ curl -X POST http://localhost:8000/pay/insights \
 | `FGA_CLIENT_SECRET`   | Okta FGA OAuth2 client secret            |
 | `FGA_API_URL`         | FGA API URL (defaults to US1 region)     |
 
+## Run
+
+Install with `uv`:
+
+```bash
+uv pip install -e .
+```
+
+Or simply with `pip`:
+
+```bash
+pip install -e .
+```
+
+Run the API server locally on port 8000:
+
+```bash
+run-server
+```
+
 ## License
 
 [Apache 2.0](LICENSE)
