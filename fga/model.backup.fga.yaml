@@ -1,0 +1,161 @@
+model: |
+  model
+  schema 1.1
+
+  type user
+  relations
+      define department: [department]
+      define manager: manager from department
+
+  type department
+  relations
+      define manager: [user]
+
+  type paycheck
+  relations
+      define can_view: owner or manager from owner
+      define owner: [user]
+
+tuples:
+  - user: department:devrel
+    relation: department
+    object: user:auth0|69b1c4310b115d0768d55a95 #John
+  - user: department:devrel
+    relation: department
+    object: user:auth0|69b1c4232ef057855932e20d #Jane
+  - user: department:devrel
+    relation: department
+    object: user:auth0|69b7f55de63ed0a675507d34 # Mary
+
+  - user: user:auth0|69b7f55de63ed0a675507d34 # Mary
+    relation: manager
+    object: department:devrel
+
+  - user: user:auth0|69b1c4310b115d0768d55a95 #John
+    relation: owner
+    object: paycheck:john_paycheck_01.pdf
+  - user: user:auth0|69b1c4310b115d0768d55a95 #John
+    relation: owner
+    object: paycheck:john_paycheck_02.pdf
+  - user: user:auth0|69b1c4310b115d0768d55a95 #John
+    relation: owner
+    object: paycheck:john_paycheck_03.pdf
+  - user: user:auth0|69b1c4310b115d0768d55a95 #John
+    relation: owner
+    object: paycheck:john_paycheck_04.pdf
+  - user: user:auth0|69b1c4232ef057855932e20d #Jane
+    relation: owner
+    object: paycheck:jane_paycheck_01.pdf
+  - user: user:auth0|69b1c4232ef057855932e20d #Jane
+    relation: owner
+    object: paycheck:jane_paycheck_02.pdf
+  - user: user:auth0|69b1c4232ef057855932e20d #Jane
+    relation: owner
+    object: paycheck:jane_paycheck_03.pdf
+  - user: user:auth0|69b1c4232ef057855932e20d #Jane
+    relation: owner
+    object: paycheck:jane_paycheck_04.pdf
+  - user: user:auth0|69b7f55de63ed0a675507d34 # Mary
+    relation: owner
+    object: paycheck:mary_paycheck_01.pdf
+  - user: user:auth0|69b7f55de63ed0a675507d34 # Mary
+    relation: owner
+    object: paycheck:mary_paycheck_02.pdf
+  - user: user:auth0|69b7f55de63ed0a675507d34 # Mary
+    relation: owner
+    object: paycheck:mary_paycheck_03.pdf
+  - user: user:auth0|69b7f55de63ed0a675507d34 # Mary
+    relation: owner
+    object: paycheck:mary_paycheck_04.pdf
+
+tests:
+  - name: John can view his paychecks
+    check:
+      - user: user:auth0|69b1c4310b115d0768d55a95 #John
+        object: paycheck:john_paycheck_01.pdf
+        assertions:
+          can_view: true
+      - user: user:auth0|69b1c4310b115d0768d55a95 #John
+        object: paycheck:john_paycheck_02.pdf
+        assertions:
+          can_view: true
+      - user: user:auth0|69b1c4310b115d0768d55a95 #John
+        object: paycheck:john_paycheck_03.pdf
+        assertions:
+          can_view: true
+      - user: user:auth0|69b1c4310b115d0768d55a95 #John
+        object: paycheck:john_paycheck_04.pdf
+        assertions:
+          can_view: true
+  - name: Jane can view her paychecks
+    check:
+      - user: user:auth0|69b1c4232ef057855932e20d #Jane
+        object: paycheck:jane_paycheck_01.pdf
+        assertions:
+          can_view: true
+      - user: user:auth0|69b1c4232ef057855932e20d #Jane
+        object: paycheck:jane_paycheck_02.pdf
+        assertions:
+          can_view: true
+      - user: user:auth0|69b1c4232ef057855932e20d #Jane
+        object: paycheck:jane_paycheck_03.pdf
+        assertions:
+          can_view: true
+      - user: user:auth0|69b1c4232ef057855932e20d #Jane
+        object: paycheck:jane_paycheck_04.pdf
+        assertions:
+          can_view: true
+  - name: Mary can view her paychecks
+    check:
+      - user: user:auth0|69b7f55de63ed0a675507d34 # Mary
+        object: paycheck:mary_paycheck_01.pdf
+        assertions:
+          can_view: true
+      - user: user:auth0|69b7f55de63ed0a675507d34 # Mary
+        object: paycheck:mary_paycheck_02.pdf
+        assertions:
+          can_view: true
+      - user: user:auth0|69b7f55de63ed0a675507d34 # Mary
+        object: paycheck:mary_paycheck_03.pdf
+        assertions:
+          can_view: true
+      - user: user:auth0|69b7f55de63ed0a675507d34 # Mary
+        object: paycheck:mary_paycheck_04.pdf
+        assertions:
+          can_view: true
+  - name: Mary can view her team's paychecks
+    check:
+      - user: user:auth0|69b7f55de63ed0a675507d34 # Mary
+        object: paycheck:john_paycheck_01.pdf
+        assertions:
+          can_view: true
+      - user: user:auth0|69b7f55de63ed0a675507d34 # Mary
+        object: paycheck:jane_paycheck_02.pdf
+        assertions:
+          can_view: true
+      - user: user:auth0|69b7f55de63ed0a675507d34 # Mary
+        object: paycheck:john_paycheck_03.pdf
+        assertions:
+          can_view: true
+      - user: user:auth0|69b7f55de63ed0a675507d34 # Mary
+        object: paycheck:jane_paycheck_04.pdf
+        assertions:
+          can_view: true
+  - name: John can not view team memmbers paychecks
+    check:
+      - user: user:auth0|69b1c4310b115d0768d55a95 #John
+        object: paycheck:mary_paycheck_01.pdf
+        assertions:
+          can_view: false
+      - user: user:auth0|69b1c4310b115d0768d55a95 #John
+        object: paycheck:jane_paycheck_02.pdf
+        assertions:
+          can_view: false
+      - user: user:auth0|69b1c4310b115d0768d55a95 #John
+        object: paycheck:mary_paycheck_03.pdf
+        assertions:
+          can_view: false
+      - user: user:auth0|69b1c4310b115d0768d55a95 #John
+        object: paycheck:jane_paycheck_04.pdf
+        assertions:
+          can_view: false

@@ -1,0 +1,35 @@
+model: |
+  model
+  schema 1.1
+
+  type user
+  relations
+      define department: [department]
+      define manager: manager from department
+
+  type department
+  relations
+      define manager: [user]
+
+  type paycheck
+  relations
+      define can_view: owner or manager from owner
+      define owner: [user]
+
+tuples:
+  - user: department:devrel
+    relation: department
+    object: user:auth0|69b1c4310b115d0768d55a95 #John
+  - user: department:devrel
+    relation: department
+    object: user:auth0|69b1c4232ef057855932e20d #Jane
+  - user: department:devrel
+    relation: department
+    object: user:auth0|69b7f55de63ed0a675507d34 # Mary
+
+  - user: user:auth0|69b7f55de63ed0a675507d34 # Mary
+    relation: manager
+    object: department:devrel
+
+tests:
+  -

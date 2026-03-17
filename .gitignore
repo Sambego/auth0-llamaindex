@@ -1,0 +1,24 @@
+# Environment — never commit credentials
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# macOS
+.DS_Store
+
+# Paycheck PDFs — potentially sensitive demo data
+paychecks/
+
+# LlamaIndex / LlamaCloud cache
+.cache/
+storage/
+
+# IDE
+.vscode/
+.idea/
