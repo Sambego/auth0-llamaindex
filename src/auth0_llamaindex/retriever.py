@@ -18,7 +18,9 @@ secure systems — list_objects is efficient; batch_check is the authoritative g
 """
 
 import asyncio
+import functools
 import os
+from typing import Any, cast
 
 from auth0_ai_llamaindex import FGARetriever
 from llama_cloud import AsyncLlamaCloud
@@ -26,12 +28,16 @@ from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
 from openfga_sdk import OpenFgaClient
 from openfga_sdk.client.models import ClientBatchCheckItem
+from openfga_sdk.client.models.list_objects_request import ClientListObjectsRequest
 from openfga_sdk.models import ListObjectsRequest
 
-from fga_config import fga_config
+from .fga_config import fga_config
+
 
 # Single shared LlamaCloud client — connection pool is reused across requests.
-llama = AsyncLlamaCloud(api_key=os.getenv("LLAMA_CLOUD_API_KEY"))
+@functools.lru_cache(maxsize=1)
+def get_llama_cloud_client():
+    return AsyncLlamaCloud(api_key=os.getenv("LLAMA_CLOUD_API_KEY"))
 
 
 class LlamaCloudRetriever(BaseRetriever):
@@ -47,6 +53,7 @@ class LlamaCloudRetriever(BaseRetriever):
 
     def __init__(self, user_id: str):
         self._user_id = user_id
+        self._llama = get_llama_cloud_client()
         super().__init__()
 
     def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
@@ -61,15 +68,21 @@ class LlamaCloudRetriever(BaseRetriever):
         # satisfy it as owners; managers satisfy it transitively through
         # their department's manager relation.
         async with OpenFgaClient(fga_config()) as fga:
-            resp = await fga.list_objects(ListObjectsRequest(
-                user=f"user:{self._user_id}",
-                relation="can_view",
-                type="paycheck",
-            ))
+            resp = await fga.list_objects(
+                cast(
+                    ClientListObjectsRequest,
+                    ListObjectsRequest(
+                        user=f"user:{self._user_id}",
+                        relation="can_view",
+                        type="paycheck",
+                    ),
+                )
+            )
 
         # FGA returns fully qualified objects like "paycheck:<file_id>".
         # Strip the type prefix to get the bare LlamaCloud file IDs.
-        file_ids = [obj.split(":", 1)[-1] for obj in (resp.objects or [])]
+        objs = getattr(resp, "objects", [])
+        file_ids = [cast(str, obj).lstrip("paycheck:") for obj in objs]
 
         if not file_ids:
             return []
@@ -79,18 +92,21 @@ class LlamaCloudRetriever(BaseRetriever):
         # LlamaParse caches results, so parse() returns immediately for
         # documents that were already parsed at upload time.
         file_names: dict[str, str] = {}
-        async for f in llama.files.list(file_ids=file_ids):
+        async for f in self._llama.files.list(file_ids=file_ids):
             file_names[f.id] = f.name
 
-        parse_results = await asyncio.gather(*[
-            llama.parsing.parse(
-                file_id=fid,
-                tier="fast",
-                version="latest",
-                expand=["markdown_full"],  # return the full parsed markdown
-            )
-            for fid in file_ids
-        ])
+        semaphore = asyncio.Semaphore(5)
+
+        async def parse_one(fid: str) -> Any:
+            async with semaphore:
+                return await self._llama.parsing.parse(
+                    file_id=fid,
+                    tier="fast",
+                    version="latest",
+                    expand=["markdown_full"],  # return the full parsed markdown
+                )
+
+        parse_results = await asyncio.gather(*[parse_one(fid) for fid in file_ids])
 
         # Build LlamaIndex nodes. The file_id becomes the node ID so it can
         # be matched against FGA objects in the batch_check layer below.
@@ -124,6 +140,7 @@ def build_fga_retriever(user_id: str) -> FGARetriever:
     node.id_ is the LlamaCloud file_id, which matches the object written to
     FGA at upload time: "paycheck:<file_id>".
     """
+
     def build_query(node):
         return ClientBatchCheckItem(
             user=f"user:{user_id}",
@@ -152,10 +169,17 @@ async def get_department_members(user_id: str) -> tuple[list[str], list[str]]:
     """
     async with OpenFgaClient(fga_config()) as fga:
         # Find departments where this user is listed as manager.
-        dept_resp = await fga.list_objects(ListObjectsRequest(
-            user=f"user:{user_id}", relation="manager", type="department",
-        ))
-        dept_objects = dept_resp.objects or []
+        dept_resp = await fga.list_objects(
+            cast(
+                ClientListObjectsRequest,
+                ListObjectsRequest(
+                    user=f"user:{user_id}",
+                    relation="manager",
+                    type="department",
+                ),
+            )
+        )
+        dept_objects = getattr(dept_resp, "objects", [])
 
         if not dept_objects:
             return [], []
@@ -163,11 +187,21 @@ async def get_department_members(user_id: str) -> tuple[list[str], list[str]]:
         # For each managed department, find all members.
         members: set[str] = set()
         for dept in dept_objects:
-            resp = await fga.list_objects(ListObjectsRequest(
-                user=dept, relation="department", type="user",
-            ))
-            for obj in (resp.objects or []):
-                members.add(obj.split(":", 1)[-1])  # strip "user:" prefix
+            resp = await fga.list_objects(
+                cast(
+                    ClientListObjectsRequest,
+                    ListObjectsRequest(
+                        user=dept,
+                        relation="department",
+                        type="user",
+                    ),
+                )
+            )
+            objs = getattr(resp, "objects", [])
+            for obj in objs:
+                members.add(cast(str, obj).lstrip("user:"))  # strip "user:" prefix
 
-    departments = [d.split(":", 1)[-1] for d in dept_objects]  # strip "department:" prefix
+    departments = [
+        cast(str, d).lstrip("department:") for d in dept_objects
+    ]  # strip "department:" prefix
     return departments, list(members)

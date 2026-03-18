@@ -10,12 +10,15 @@ This module centralises the configuration so every FGA client across the app
 (retriever, upload, scripts) is set up identically.
 """
 
+import functools
 import os
 
+from dotenv import load_dotenv
 from openfga_sdk import ClientConfiguration
 from openfga_sdk.credentials import CredentialConfiguration, Credentials
 
 
+@functools.lru_cache(maxsize=1)
 def fga_config() -> ClientConfiguration:
     """
     Build a ClientConfiguration from environment variables.
@@ -23,6 +26,7 @@ def fga_config() -> ClientConfiguration:
     FGA_API_URL defaults to the US1 region; override it if your store is in
     a different region (e.g. https://api.eu1.fga.dev).
     """
+    load_dotenv(".env")
     return ClientConfiguration(
         api_url=os.getenv("FGA_API_URL", "https://api.us1.fga.dev"),
         store_id=os.getenv("FGA_STORE_ID"),

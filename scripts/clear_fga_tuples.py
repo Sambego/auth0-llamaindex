@@ -8,24 +8,31 @@ Usage:
 import asyncio
 
 from dotenv import load_dotenv
-
-load_dotenv()
-
-from openfga_sdk import OpenFgaClient  # noqa: E402 — after load_dotenv
+from openfga_sdk import OpenFgaClient
 from openfga_sdk.client.models import ClientTuple, ClientWriteRequest
 from openfga_sdk.models import ReadRequestTupleKey
 
-from fga_config import fga_config  # noqa: E402
+from auth0_llamaindex.fga_config import fga_config
 
 
 async def main() -> None:
+    load_dotenv()
+
     async with OpenFgaClient(fga_config()) as fga:
         all_tuples, continuation_token = [], None
         while True:
-            options = {"continuation_token": continuation_token} if continuation_token else None
+            options = (
+                {"continuation_token": continuation_token}
+                if continuation_token
+                else None
+            )
             resp = await fga.read(ReadRequestTupleKey(), options=options)
-            all_tuples += [ClientTuple(user=t.key.user, relation=t.key.relation, object=t.key.object)
-                           for t in (resp.tuples or [])]
+            all_tuples += [
+                ClientTuple(
+                    user=t.key.user, relation=t.key.relation, object=t.key.object
+                )
+                for t in (resp.tuples or [])
+            ]
             continuation_token = resp.continuation_token
             if not continuation_token:
                 break
@@ -36,7 +43,7 @@ async def main() -> None:
 
         print(f"Deleting {len(all_tuples)} tuples…")
         for i in range(0, len(all_tuples), 10):
-            await fga.write(ClientWriteRequest(deletes=all_tuples[i:i + 10]))
+            await fga.write(ClientWriteRequest(deletes=all_tuples[i : i + 10]))
         print("Done.")
 
 

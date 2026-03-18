@@ -30,13 +30,12 @@ Insights flow
 
 import asyncio
 import base64
+import functools
 import json
 import os
 
+import uvicorn
 from dotenv import load_dotenv
-
-load_dotenv()
-
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from llama_cloud import AsyncLlamaCloud
@@ -44,22 +43,52 @@ from openfga_sdk import OpenFgaClient
 from openfga_sdk.client.models import ClientTuple, ClientWriteRequest
 from pydantic import BaseModel
 
-from fga_config import fga_config
-from workflow import RAGWorkflow
+from .fga_config import fga_config
+from .workflow import RAGWorkflow
 
 app = FastAPI()
 
+
 # Shared instances — created once at startup so connection pools are reused.
-workflow = RAGWorkflow(timeout=120)
-llama = AsyncLlamaCloud(api_key=os.getenv("LLAMA_CLOUD_API_KEY"))
-security = HTTPBearer()
+@functools.lru_cache(maxsize=1)
+def get_workflow() -> RAGWorkflow:
+    load_dotenv(".env")
+    return RAGWorkflow(timeout=120)
+
+
+@functools.lru_cache(maxsize=1)
+def get_llama_cloud_client() -> AsyncLlamaCloud:
+    load_dotenv(".env")
+    return AsyncLlamaCloud(api_key=os.getenv("LLAMA_CLOUD_API_KEY"))
+
+
+@functools.lru_cache(maxsize=1)
+def get_security() -> HTTPBearer:
+    load_dotenv(".env")
+    return HTTPBearer()
 
 
 class InsightsRequest(BaseModel):
     question: str
 
 
-def get_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+class FileRepr(BaseModel):
+    file_id: str
+    file: str | None
+    markdown: str | None
+
+
+class UploadResponse(BaseModel):
+    uploads: list[FileRepr]
+
+
+class InsightResponse(BaseModel):
+    answer: str
+
+
+def get_user_id(
+    credentials: HTTPAuthorizationCredentials = Depends(get_security()),
+) -> str:
     """
     Extract the user ID from the JWT bearer token.
 
@@ -80,7 +109,7 @@ def get_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
-async def upload_and_parse(file: UploadFile, user_id: str) -> dict:
+async def upload_and_parse(file: UploadFile, user_id: str) -> FileRepr:
     """
     Upload a single paycheck PDF and register the user as its owner in FGA.
 
@@ -95,6 +124,8 @@ async def upload_and_parse(file: UploadFile, user_id: str) -> dict:
       paycheck:<file_id>
     This same ID is used in the retriever when checking authorization.
     """
+
+    llama = get_llama_cloud_client()
     content = await file.read()
 
     # Step 1: Store the PDF in LlamaCloud.
@@ -117,27 +148,38 @@ async def upload_and_parse(file: UploadFile, user_id: str) -> dict:
     # The FGA model derives can_view from owner, so this single write is
     # enough to let the user retrieve their own paycheck in the RAG pipeline.
     async with OpenFgaClient(fga_config()) as fga:
-        await fga.write(ClientWriteRequest(writes=[
-            ClientTuple(
-                user=f"user:{user_id}",
-                relation="owner",
-                object=f"paycheck:{file_obj.id}",
-            ),
-        ]))
+        await fga.write(
+            ClientWriteRequest(
+                writes=[
+                    ClientTuple(
+                        user=f"user:{user_id}",
+                        relation="owner",
+                        object=f"paycheck:{file_obj.id}",
+                    ),
+                ]
+            )
+        )
 
-    return {"file": file.filename, "file_id": file_obj.id, "markdown": result.markdown_full}
+    return FileRepr(
+        file=file.filename,
+        file_id=file_obj.id,
+        markdown=result.markdown_full,
+    )
 
 
 @app.post("/pay/insights")
-async def pay_insights(body: InsightsRequest, user_id: str = Depends(get_user_id)):
+async def pay_insights(
+    body: InsightsRequest, user_id: str = Depends(get_user_id)
+) -> InsightResponse:
     """
     Answer a payroll question using only documents the caller is authorized to see.
 
     The user_id from the JWT sub claim is passed into the RAG workflow, which
     uses it to query FGA and filter documents before they reach the LLM.
     """
+    workflow = get_workflow()
     result = await workflow.run(query=body.question, user_id=user_id)
-    return {"answer": str(result)}
+    return InsightResponse(answer=str(result))
 
 
 @app.post("/pay/upload/{user_id}")
@@ -145,7 +187,7 @@ async def upload_paychecks(
     user_id: str,
     files: list[UploadFile] = File(...),
     _: str = Depends(get_user_id),  # require a valid token from the uploader
-):
+) -> UploadResponse:
     """
     Upload one or more paycheck PDFs for a given employee.
 
@@ -154,5 +196,15 @@ async def upload_paychecks(
 
     All files are uploaded and parsed in parallel with asyncio.gather.
     """
-    results = await asyncio.gather(*[upload_and_parse(f, user_id) for f in files])
-    return {"uploads": results}
+    semaphore = asyncio.Semaphore(5)
+
+    async def do_one(f: UploadFile) -> FileRepr:
+        async with semaphore:
+            return await upload_and_parse(f, user_id)
+
+    results = await asyncio.gather(*[do_one(f) for f in files])
+    return UploadResponse(uploads=results)
+
+
+def run() -> None:
+    uvicorn.run(app, host="0.0.0.0", port=8000)

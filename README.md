@@ -62,17 +62,27 @@ Authorization is modelled in `fga/model.fga.yaml`. Mary's access to team paychec
 
 ```bash
 # 1. Install dependencies
-pip install -r requirements.txt
+pip install -e .
 
 # 2. Copy and fill in your credentials
 cp .env.example .env
 
 # 3. Initialise the FGA authorization model from fga/model.fga.yaml
-python -m scripts.setup_fga
+python3 ./scripts/setup_fga.py
 
 # 4. Start the API
-uvicorn api:app
+run-server
 ```
+
+The API will be live at http://localhost:8000.
+
+To interact with it, you can use the pre-made client:
+
+```bash
+run-client
+```
+
+Which has an interactive (but minimal) TUI to send requests to the server.
 
 ## API
 
@@ -130,6 +140,7 @@ curl -X POST http://localhost:8000/pay/insights \
 | `FGA_CLIENT_ID`       | Okta FGA OAuth2 client ID                |
 | `FGA_CLIENT_SECRET`   | Okta FGA OAuth2 client secret            |
 | `FGA_API_URL`         | FGA API URL (defaults to US1 region)     |
+
 
 ## License
 
